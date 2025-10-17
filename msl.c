@@ -21,7 +21,7 @@ typedef enum {
     TOK_SEMICOLON, TOK_COLON, TOK_COMMA, TOK_DOT, TOK_ASSIGN,
     TOK_PLUS, TOK_MINUS, TOK_STAR, TOK_SLASH,
     TOK_EQ, TOK_NE, TOK_LT, TOK_GT, TOK_LE, TOK_GE,
-    TOK_ARROW, TOK_HASH, TOK_LBRACKET, TOK_RBRACKET
+    TOK_ARROW, TOK_HASH, TOK_LBRACKET, TOK_RBRACKET, TOK_SCOPE_RESOLUTION
 } TokenType;
 
 typedef struct {
@@ -88,7 +88,7 @@ typedef enum {
     AST_CALL, AST_FUNCTION, AST_RETURN, AST_BLOCK, AST_LET,
     AST_ASSIGN, AST_IF, AST_WHILE, AST_FOR, AST_NAMESPACE,
     AST_STRUCT_DEF, AST_STRUCT_INIT, AST_FIELD_ACCESS,
-    AST_IMPORT, AST_EXTERN_FN, AST_BREAK
+    AST_IMPORT, AST_EXTERN_FN, AST_BREAK, AST_SCOPE_RESOLUTION,
 } ASTNodeType;
 
 typedef struct ASTNode {
@@ -175,6 +175,10 @@ typedef struct ASTNode {
             int param_count;
             char *return_type;
         } extern_fn;
+        struct {
+            char *namespace_name;
+            char *member_name;
+        } scope_resolution;
     };
 } ASTNode;
 
@@ -476,6 +480,7 @@ Token* lexer_next(Lexer *l) {
     if (isalpha(c) || c == '_') {
         int start = l->pos;
         while (isalnum(l->source[l->pos]) || l->source[l->pos] == '_') l->pos++;
+
         int len = l->pos - start;
         char *ident = malloc(len + 1);
         strncpy(ident, l->source + start, len);
@@ -507,7 +512,6 @@ Token* lexer_next(Lexer *l) {
         case '[': return token_new(TOK_LBRACKET, NULL, line);
         case ']': return token_new(TOK_RBRACKET, NULL, line);
         case ';': return token_new(TOK_SEMICOLON, NULL, line);
-        case ':': return token_new(TOK_COLON, NULL, line);
         case ',': return token_new(TOK_COMMA, NULL, line);
         case '.': return token_new(TOK_DOT, NULL, line);
         case '+': return token_new(TOK_PLUS, NULL, line);
@@ -544,6 +548,12 @@ Token* lexer_next(Lexer *l) {
                 return token_new(TOK_ARROW, NULL, line);
             }
             return token_new(TOK_MINUS, NULL, line);
+        case ':':
+            if (l->source[l->pos] == ':') {
+                l->pos++;
+                return token_new(TOK_SCOPE_RESOLUTION, NULL, line);
+            }
+            return token_new(TOK_COLON, NULL, line);
     }
 
     return token_new(TOK_EOF, NULL, line);
@@ -667,6 +677,20 @@ ASTNode* parse_postfix(Parser *p) {
             access->field_access.object = node;
             access->field_access.field = strdup(field->value);
             node = access;
+        } else if (parser_match(p, TOK_SCOPE_RESOLUTION)) {
+            parser_advance(p);
+            Token *member = parser_expect(p, TOK_IDENT);
+            ASTNode *scope_res = malloc(sizeof(ASTNode));
+            scope_res->type = AST_SCOPE_RESOLUTION;
+            if (node->type == AST_IDENT) {
+                scope_res->scope_resolution.namespace_name = strdup(node->str_val);
+            } else {
+                fprintf(stderr, "Invalid namespace in scope resolution\n");
+                exit(1);
+            }
+            scope_res->scope_resolution.member_name = strdup(member->value);
+            free(node);
+            node = scope_res;
         } else {
             break;
         }
@@ -866,6 +890,17 @@ ASTNode* parse_toplevel(Parser *p) {
     if (parser_match(p, TOK_FN)) {
         parser_advance(p);
         Token *name = parser_expect(p, TOK_IDENT);
+
+        char *full_name = strdup(name->value);
+        if (parser_match(p, TOK_SCOPE_RESOLUTION)) {
+            parser_advance(p);
+            Token *member = parser_expect(p, TOK_IDENT);
+            char *temp = malloc(strlen(full_name) + strlen(member->value) + 3);
+            sprintf(temp, "%s::%s", full_name, member->value);
+            free(full_name);
+            full_name = temp;
+        }
+
         parser_expect(p, TOK_LPAREN);
 
         char **params = malloc(sizeof(char*) * 100);
@@ -897,7 +932,7 @@ ASTNode* parse_toplevel(Parser *p) {
                 parser_expect(p, TOK_SEMICOLON);
                 ASTNode *node = malloc(sizeof(ASTNode));
                 node->type = AST_EXTERN_FN;
-                node->extern_fn.name = strdup(name->value);
+                node->extern_fn.name = full_name;
                 node->extern_fn.param_types = params;
                 node->extern_fn.param_count = param_count;
                 node->extern_fn.return_type = return_type;
@@ -909,7 +944,7 @@ ASTNode* parse_toplevel(Parser *p) {
 
         ASTNode *node = malloc(sizeof(ASTNode));
         node->type = AST_FUNCTION;
-        node->function.name = strdup(name->value);
+        node->function.name = full_name;
         node->function.param_names = params;
         node->function.param_count = param_count;
         node->function.body = body;
@@ -1122,6 +1157,24 @@ Value* eval_expr(ASTNode *node, Env *env) {
 
             value_release(obj);
             return value_new_null();
+        }
+
+        case AST_SCOPE_RESOLUTION: {
+            char *qualified = malloc(strlen(node->scope_resolution.namespace_name) +
+                                               strlen(node->scope_resolution.member_name) + 3);
+            sprintf(qualified, "%s::%s",
+                   node->scope_resolution.namespace_name,
+                   node->scope_resolution.member_name);
+
+            Value *val = env_get(env, qualified);
+            if (!val) {
+                fprintf(stderr, "Undefined namespaced identifier: %s\n", qualified);
+                free(qualified);
+                exit(1);
+            }
+            value_retain(val);
+            free(qualified);
+            return val;
         }
 
         default:
@@ -1355,10 +1408,23 @@ Value* builtin_str(Value **args, int argc) {
 }
 
 void register_extern_functions(Env *env) {
-    env_set(env, "print", value_new_native(builtin_print));
-    env_set(env, "println", value_new_native(builtin_println));
-    env_set(env, "str", value_new_native(builtin_str));
-    env_set(env, "ConsoleFlush", value_new_native(builtin_console_flush));
+    Env *std_env = env_new(env);
+
+    env_set(std_env, "print", value_new_native(builtin_print));
+    env_set(std_env, "println", value_new_native(builtin_println));
+    env_set(std_env, "str", value_new_native(builtin_str));
+    env_set(std_env, "ConsoleFlush", value_new_native(builtin_console_flush));
+
+    EnvEntry *entry = std_env->entries;
+    while (entry) {
+        char *qualified = malloc(strlen("std") + strlen(entry->name) + 3);
+        sprintf(qualified, "std::%s", entry->name);
+        env_set(env, qualified, entry->value);
+        free(qualified);
+        entry = entry->next;
+    }
+
+    env_release(std_env);
 }
 
 char* read_file(const char *path) {

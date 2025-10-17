@@ -1,11 +1,9 @@
+fn a::p(): int {
+    return 10;
+}
+
 fn main(): int {
-    println("Hello World!");
-    let i = 0;
-    while (i < 10) {
-        if (i == 5) {
-            break;
-        }
-        i = i + 1;
-        println(i);
-    }
+    std::println("Hello World!");
+    std::println(a::p());
+    return 0;
 }
