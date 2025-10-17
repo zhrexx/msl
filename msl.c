@@ -1425,7 +1425,7 @@ void register_extern_functions(Env *env) {
     env_set(std_env, "print", value_new_native(builtin_print));
     env_set(std_env, "println", value_new_native(builtin_println));
     env_set(std_env, "str", value_new_native(builtin_str));
-    env_set(env, "std::console::flush", value_new_native(builtin_console_flush));
+    env_set(env, "console::flush", value_new_native(builtin_console_flush));
 
     EnvEntry *entry = std_env->entries;
     while (entry) {
