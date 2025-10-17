@@ -682,13 +682,24 @@ ASTNode* parse_postfix(Parser *p) {
             Token *member = parser_expect(p, TOK_IDENT);
             ASTNode *scope_res = malloc(sizeof(ASTNode));
             scope_res->type = AST_SCOPE_RESOLUTION;
+
             if (node->type == AST_IDENT) {
                 scope_res->scope_resolution.namespace_name = strdup(node->str_val);
+                scope_res->scope_resolution.member_name = strdup(member->value);
+            } else if (node->type == AST_SCOPE_RESOLUTION) {
+                char *chained = malloc(strlen(node->scope_resolution.namespace_name) +
+                                     strlen("::") +
+                                     strlen(node->scope_resolution.member_name) + 1);
+                sprintf(chained, "%s::%s",
+                       node->scope_resolution.namespace_name,
+                       node->scope_resolution.member_name);
+                scope_res->scope_resolution.namespace_name = chained;
+                scope_res->scope_resolution.member_name = strdup(member->value);
             } else {
-                fprintf(stderr, "Invalid namespace in scope resolution\n");
+                fprintf(stderr, "Invalid namespace in scope resolution expected %d or %d got %d\n",
+                       AST_IDENT, AST_SCOPE_RESOLUTION, node->type);
                 exit(1);
             }
-            scope_res->scope_resolution.member_name = strdup(member->value);
             free(node);
             node = scope_res;
         } else {
@@ -1410,10 +1421,11 @@ Value* builtin_str(Value **args, int argc) {
 void register_extern_functions(Env *env) {
     Env *std_env = env_new(env);
 
+
     env_set(std_env, "print", value_new_native(builtin_print));
     env_set(std_env, "println", value_new_native(builtin_println));
     env_set(std_env, "str", value_new_native(builtin_str));
-    env_set(std_env, "ConsoleFlush", value_new_native(builtin_console_flush));
+    env_set(env, "std::console::flush", value_new_native(builtin_console_flush));
 
     EnvEntry *entry = std_env->entries;
     while (entry) {
