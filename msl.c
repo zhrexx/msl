@@ -1,3 +1,8 @@
+/*
+zhrexx - MIT License - Copyright (c) 2025
+Permission is granted to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of this software. Provided the copyright notice is included. THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY.
+*/
+
 // TODO: maybe add continue
 
 #include <stdio.h>
